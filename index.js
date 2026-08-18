@@ -4,28 +4,22 @@ const {
   askDate, askProject, confirmAndSave, showTodayStatus,
   showHistory, showStockStatus, showProjectMenu, startAddProject,
   saveProject, showToggleProjects, toggleProject,
-  getSession, clearSession, saveSession, isValidDate,
+  startRestock, askRestockQuantity, confirmRestock,
+  showRecentEntries, deleteEntry,
+  showProjectReport, showProjectDetail,
+  getSession, clearSession, saveSession, isValidDate, isMaster,
 } = require("./lib/material");
 const { sendMessage, answerCallback } = require("./lib/telegram");
 
 const app = express();
 app.use(express.json());
 
-const MASTER_CHAT_ID = process.env.MASTER_CHAT_ID;
+app.get("/", (req, res) => res.send("Bot APT Material v2.1 running!"));
 
-app.get("/", (req, res) => res.send("Bot APT Material v2 running!"));
-
-// ============================================================
-// Whitelist (opsional)
-// ============================================================
 function isAllowed(userId) {
   const allowed = process.env.ALLOWED_USER_IDS;
   if (!allowed) return true;
   return allowed.split(",").includes(String(userId));
-}
-
-function isMaster(chatId) {
-  return String(chatId) === String(MASTER_CHAT_ID);
 }
 
 // ============================================================
@@ -68,11 +62,10 @@ async function handleMessage(message) {
     return sendMessage(chatId, "❌ Dibatalkan. Ketik /start untuk menu.");
   }
 
-  // Cek session
   const session = await getSession(chatId);
 
   if (session) {
-    // Input jumlah
+    // Input jumlah pemakaian
     if (session.step === "input_quantity") {
       const quantity = parseFloat(text.replace(",", "."));
       if (isNaN(quantity) || quantity <= 0) {
@@ -89,7 +82,16 @@ async function handleMessage(message) {
       return askProject(chatId, text);
     }
 
-    // Tambah project (master)
+    // Input jumlah restock
+    if (session.step === "input_restock_qty") {
+      const quantity = parseFloat(text.replace(",", "."));
+      if (isNaN(quantity) || quantity <= 0) {
+        return sendMessage(chatId, "❌ Angka tidak valid. Contoh: <code>225</code>");
+      }
+      return confirmRestock(chatId, quantity, userName);
+    }
+
+    // Tambah project
     if (session.step === "add_project") {
       return saveProject(chatId, text);
     }
@@ -123,19 +125,15 @@ async function handleCallback(callbackQuery) {
       `❓ <b>Bantuan</b>\n\n` +
       `<b>Cara pakai:</b>\n` +
       `1. Pilih "Lapor Pemakaian"\n` +
-      `2. Pilih supplier (Justus/Warna Alpha/Lain-lain)\n` +
+      `2. Pilih supplier\n` +
       `3. Pilih bahan\n` +
-      `4. Ketik jumlah pemakaian\n` +
+      `4. Ketik jumlah\n` +
       `5. Pilih tanggal\n` +
       `6. Pilih project\n` +
-      `7. Data tersimpan otomatis!\n\n` +
-      `<b>Command:</b>\n` +
-      `/start — Menu utama\n` +
-      `/laporan — Input pemakaian\n` +
-      `/status — Status hari ini\n` +
-      `/riwayat — 7 hari terakhir\n` +
-      `/stok — Cek stok semua bahan\n` +
-      `/batal — Batalkan input`
+      `7. Selesai!\n\n` +
+      `/start — Menu | /laporan — Input\n` +
+      `/status — Hari ini | /stok — Cek stok\n` +
+      `/riwayat — 7 hari | /batal — Batalkan`
     );
   }
 
@@ -145,63 +143,83 @@ async function handleCallback(callbackQuery) {
     return showMainMenu(chatId, userName);
   }
 
-  // Pilih supplier
+  // === FLOW PEMAKAIAN ===
   if (data.startsWith("supplier_")) {
-    const supplierId = data.replace("supplier_", "");
-    return showMaterials(chatId, supplierId);
+    return showMaterials(chatId, data.replace("supplier_", ""), 0, "usage");
   }
-
-  // Navigasi halaman bahan
   if (data.startsWith("page_")) {
     const parts = data.replace("page_", "").split("_");
     const page = parseInt(parts.pop());
     const supplierId = parts.join("_");
-    return showMaterials(chatId, supplierId, page);
+    return showMaterials(chatId, supplierId, page, "usage");
   }
-
-  // Pilih bahan
   if (data.startsWith("mat_")) {
-    const materialId = data.replace("mat_", "");
-    return askQuantity(chatId, materialId);
+    return askQuantity(chatId, data.replace("mat_", ""));
   }
-
-  // Pilih tanggal
   if (data.startsWith("date_")) {
     const dateVal = data.replace("date_", "");
     if (dateVal === "custom") {
       const session = await getSession(chatId);
-      if (session) {
-        session.step = "input_date_custom";
-        await saveSession(chatId, session);
-      }
+      if (session) { session.step = "input_date_custom"; await saveSession(chatId, session); }
       return sendMessage(chatId, "📅 Ketik tanggal (format: <code>2026-08-13</code>):");
     }
     return askProject(chatId, dateVal);
   }
-
-  // Pilih project
-  if (data.startsWith("proj_")) {
+  if (data.startsWith("proj_") && !data.startsWith("proj_add") && !data.startsWith("proj_toggle")) {
     const val = data.replace("proj_", "");
-    if (val === "add") return startAddProject(chatId);
-    if (val === "toggle") return showToggleProjects(chatId);
-    // projectId is a number
     return confirmAndSave(chatId, parseInt(val), userId, userName);
   }
 
-  // Toggle project
-  if (data.startsWith("toggle_")) {
-    if (!isMaster(chatId)) return sendMessage(chatId, "⛔ Hanya master yang bisa.");
-    const projectId = parseInt(data.replace("toggle_", ""));
-    return toggleProject(chatId, projectId);
+  // === FLOW RESTOCK (Master) ===
+  if (data === "menu_restock") {
+    if (!isMaster(chatId)) return sendMessage(chatId, "⛔ Hanya master.");
+    return startRestock(chatId);
+  }
+  if (data.startsWith("rsupplier_")) {
+    return showMaterials(chatId, data.replace("rsupplier_", ""), 0, "restock");
+  }
+  if (data.startsWith("rpage_")) {
+    const parts = data.replace("rpage_", "").split("_");
+    const page = parseInt(parts.pop());
+    const supplierId = parts.join("_");
+    return showMaterials(chatId, supplierId, page, "restock");
+  }
+  if (data.startsWith("rmat_")) {
+    return askRestockQuantity(chatId, data.replace("rmat_", ""));
   }
 
-  // Project menu (master only)
+  // === HAPUS DATA (Master) ===
+  if (data === "menu_delete") {
+    if (!isMaster(chatId)) return sendMessage(chatId, "⛔ Hanya master.");
+    return showRecentEntries(chatId);
+  }
+  if (data.startsWith("del_")) {
+    if (!isMaster(chatId)) return sendMessage(chatId, "⛔ Hanya master.");
+    return deleteEntry(chatId, parseInt(data.replace("del_", "")));
+  }
+
+  // === REPORT PER PROJECT (Master) ===
+  if (data === "menu_report_project") {
+    if (!isMaster(chatId)) return sendMessage(chatId, "⛔ Hanya master.");
+    return showProjectReport(chatId);
+  }
+  if (data.startsWith("rproj_")) {
+    if (!isMaster(chatId)) return sendMessage(chatId, "⛔ Hanya master.");
+    return showProjectDetail(chatId, data.replace("rproj_", ""));
+  }
+
+  // === KELOLA PROJECT (Master) ===
   if (data === "menu_project") {
     if (!isMaster(chatId)) return sendMessage(chatId, "⛔ Hanya master.");
     return showProjectMenu(chatId);
   }
+  if (data === "proj_add") return startAddProject(chatId);
+  if (data === "proj_toggle") return showToggleProjects(chatId);
+  if (data.startsWith("toggle_")) {
+    if (!isMaster(chatId)) return sendMessage(chatId, "⛔ Hanya master.");
+    return toggleProject(chatId, parseInt(data.replace("toggle_", "")));
+  }
 }
 
-// ============================================================
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log(`Bot v2 running on port ${PORT}`));
+app.listen(PORT, () => console.log(`Bot v2.1 running on port ${PORT}`));
