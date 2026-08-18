@@ -171,8 +171,7 @@ async function handleCallback(callbackQuery) {
   }
 
   // === FLOW RESTOCK (Master) ===
-  if (data === "menu_restock") {
-    if (!isMaster(chatId)) return sendMessage(chatId, "⛔ Hanya master.");
+if (data === "menu_restock") {
     return startRestock(chatId);
   }
   if (data.startsWith("rsupplier_")) {
