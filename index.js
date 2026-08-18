@@ -7,6 +7,7 @@ const {
   startRestock, askRestockQuantity, confirmRestock,
   showRecentEntries, deleteEntry,
   showProjectReport, showProjectDetail,
+  sendDailyReport,
   getSession, clearSession, saveSession, isValidDate, isMaster,
 } = require("./lib/material");
 const { sendMessage, answerCallback } = require("./lib/telegram");
@@ -14,7 +15,24 @@ const { sendMessage, answerCallback } = require("./lib/telegram");
 const app = express();
 app.use(express.json());
 
-app.get("/", (req, res) => res.send("Bot APT Material v2.1 running!"));
+app.get("/", (req, res) => res.send("Bot APT Material v2.2 running!"));
+
+// ============================================================
+// Endpoint untuk daily report (dipanggil oleh cron)
+// ============================================================
+app.get("/api/daily-report", async (req, res) => {
+  const secret = req.query.secret;
+  if (secret !== process.env.CRON_SECRET) {
+    return res.status(401).json({ error: "Unauthorized" });
+  }
+  try {
+    const result = await sendDailyReport();
+    res.json({ ok: true, ...result });
+  } catch (err) {
+    console.error("Daily report error:", err);
+    res.status(500).json({ error: err.message });
+  }
+});
 
 function isAllowed(userId) {
   const allowed = process.env.ALLOWED_USER_IDS;
@@ -171,7 +189,8 @@ async function handleCallback(callbackQuery) {
   }
 
   // === FLOW RESTOCK (Master) ===
-if (data === "menu_restock") {
+  if (data === "menu_restock") {
+    if (!isMaster(chatId)) return sendMessage(chatId, "⛔ Hanya master.");
     return startRestock(chatId);
   }
   if (data.startsWith("rsupplier_")) {
@@ -205,6 +224,18 @@ if (data === "menu_restock") {
   if (data.startsWith("rproj_")) {
     if (!isMaster(chatId)) return sendMessage(chatId, "⛔ Hanya master.");
     return showProjectDetail(chatId, data.replace("rproj_", ""));
+  }
+
+  // === KIRIM REPORT MANUAL (Master) ===
+  if (data === "menu_send_report") {
+    if (!isMaster(chatId)) return sendMessage(chatId, "⛔ Hanya master.");
+    await sendMessage(chatId, "📤 Mengirim report ke grup...");
+    const result = await sendDailyReport();
+    if (result.success) {
+      return sendMessage(chatId, `✅ Report tanggal ${result.date} terkirim ke grup!`);
+    } else {
+      return sendMessage(chatId, `❌ Gagal: ${result.reason}. Pastikan REPORT_GROUP_ID sudah di-set.`);
+    }
   }
 
   // === KELOLA PROJECT (Master) ===
