@@ -8,6 +8,7 @@ const {
   showRecentEntries, deleteEntry,
   showProjectReport, showProjectDetail,
   sendDailyReport,
+  startAdjustment, showAdjustMaterials, askAdjustQuantity, confirmAdjustment,
   getSession, clearSession, saveSession, isValidDate, isMaster,
 } = require("./lib/material");
 const { sendMessage, answerCallback } = require("./lib/telegram");
@@ -109,6 +110,15 @@ async function handleMessage(message) {
       return confirmRestock(chatId, quantity, userName);
     }
 
+    // Input adjustment stok
+    if (session.step === "input_adjust") {
+      const quantity = parseFloat(text.replace(",", "."));
+      if (isNaN(quantity) || quantity < 0) {
+        return sendMessage(chatId, "❌ Angka tidak valid. Ketik stok fisik sebenarnya (contoh: <code>150</code>)");
+      }
+      return confirmAdjustment(chatId, quantity, userName);
+    }
+
     // Tambah project
     if (session.step === "add_project") {
       return saveProject(chatId, text);
@@ -189,7 +199,8 @@ async function handleCallback(callbackQuery) {
   }
 
   // === FLOW RESTOCK (Master) ===
-    if (data === "menu_restock") {
+  if (data === "menu_restock") {
+    if (!isMaster(chatId)) return sendMessage(chatId, "⛔ Hanya master.");
     return startRestock(chatId);
   }
   if (data.startsWith("rsupplier_")) {
@@ -235,6 +246,20 @@ async function handleCallback(callbackQuery) {
     } else {
       return sendMessage(chatId, `❌ Gagal: ${result.reason}. Pastikan REPORT_GROUP_ID sudah di-set.`);
     }
+  }
+
+  // === ADJUSTMENT STOK (Master) ===
+  if (data === "menu_adjust") {
+    if (!isMaster(chatId)) return sendMessage(chatId, "⛔ Hanya master.");
+    return startAdjustment(chatId);
+  }
+  if (data.startsWith("adjsup_")) {
+    if (!isMaster(chatId)) return sendMessage(chatId, "⛔ Hanya master.");
+    return showAdjustMaterials(chatId, data.replace("adjsup_", ""));
+  }
+  if (data.startsWith("adjmat_")) {
+    if (!isMaster(chatId)) return sendMessage(chatId, "⛔ Hanya master.");
+    return askAdjustQuantity(chatId, data.replace("adjmat_", ""));
   }
 
   // === KELOLA PROJECT (Master) ===
