@@ -198,9 +198,8 @@ async function handleCallback(callbackQuery) {
     return confirmAndSave(chatId, parseInt(val), userId, userName);
   }
 
-  // === FLOW RESTOCK (Master) ===
+  // === FLOW RESTOCK ===
   if (data === "menu_restock") {
-    if (!isMaster(chatId)) return sendMessage(chatId, "⛔ Hanya master.");
     return startRestock(chatId);
   }
   if (data.startsWith("rsupplier_")) {
