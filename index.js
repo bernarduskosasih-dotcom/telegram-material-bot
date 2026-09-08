@@ -4,19 +4,22 @@ const {
   askDate, askProject, confirmAndSave, showTodayStatus,
   showHistory, showStockStatus, showProjectMenu, startAddProject,
   saveProject, showToggleProjects, toggleProject,
+  startTransferProject, showTransferTargets, startTransferNewProject,
+  createTransferTargetAndConfirm, confirmTransfer, executeTransfer,
   startRestock, askRestockQuantity, confirmRestock,
   showRecentEntries, deleteEntry,
   showProjectReport, showProjectDetail,
   sendDailyReport,
   startAdjustment, showAdjustMaterials, askAdjustQuantity, confirmAdjustment,
+  startAdjustExcel, processAdjustmentExcel,
   getSession, clearSession, saveSession, isValidDate, isMaster,
 } = require("./lib/material");
-const { sendMessage, answerCallback } = require("./lib/telegram");
+const { sendMessage, answerCallback, getFileBuffer } = require("./lib/telegram");
 
 const app = express();
 app.use(express.json());
 
-app.get("/", (req, res) => res.send("Bot APT Material v2.2 running!"));
+app.get("/", (req, res) => res.send("Bot APT Material v2.8 running!"));
 
 // ============================================================
 // Endpoint untuk daily report (dipanggil oleh cron)
@@ -48,6 +51,7 @@ app.post("/webhook", async (req, res) => {
   try {
     const body = req.body;
     if (body.callback_query) await handleCallback(body.callback_query);
+    else if (body.message && body.message.document) await handleDocument(body.message);
     else if (body.message && body.message.text) await handleMessage(body.message);
     res.sendStatus(200);
   } catch (err) {
@@ -55,6 +59,50 @@ app.post("/webhook", async (req, res) => {
     res.sendStatus(200);
   }
 });
+
+// ============================================================
+// Handle file upload (Excel adjustment stok)
+// ============================================================
+async function handleDocument(message) {
+  const chatId = message.chat.id;
+  const userId = message.from.id;
+  const userName = message.from.first_name + (message.from.last_name ? " " + message.from.last_name : "");
+
+  if (!isAllowed(userId)) {
+    await sendMessage(chatId, "⛔ Belum terdaftar. Hubungi admin.");
+    return;
+  }
+
+  const session = await getSession(chatId);
+  if (!session || session.step !== "waiting_adjust_excel") {
+    // Dokumen dikirim di luar konteks upload adjustment — abaikan saja
+    return;
+  }
+
+  if (!isMaster(chatId)) {
+    await sendMessage(chatId, "⛔ Hanya master yang bisa upload adjustment stok.");
+    await clearSession(chatId);
+    return;
+  }
+
+  const doc = message.document;
+  const fileName = (doc.file_name || "").toLowerCase();
+  if (!fileName.endsWith(".xlsx") && !fileName.endsWith(".xls")) {
+    await sendMessage(chatId, "❌ Format file harus .xlsx atau .xls. Coba upload ulang.");
+    return;
+  }
+
+  await sendMessage(chatId, "⏳ Memproses file Excel...");
+
+  try {
+    const buffer = await getFileBuffer(doc.file_id);
+    await processAdjustmentExcel(chatId, buffer, userName);
+  } catch (err) {
+    console.error("Excel processing error:", err);
+    await sendMessage(chatId, "❌ Gagal memproses file: " + err.message);
+    await clearSession(chatId);
+  }
+}
 
 // ============================================================
 // Handle pesan teks
@@ -122,6 +170,11 @@ async function handleMessage(message) {
     // Tambah project
     if (session.step === "add_project") {
       return saveProject(chatId, text);
+    }
+
+    // Nama project baru untuk tujuan transfer
+    if (session.step === "input_transfer_new_name") {
+      return createTransferTargetAndConfirm(chatId, session.transferSourceId, text);
     }
   }
 
@@ -260,6 +313,10 @@ async function handleCallback(callbackQuery) {
     if (!isMaster(chatId)) return sendMessage(chatId, "⛔ Hanya master.");
     return askAdjustQuantity(chatId, data.replace("adjmat_", ""));
   }
+  if (data === "menu_adjust_excel") {
+    if (!isMaster(chatId)) return sendMessage(chatId, "⛔ Hanya master.");
+    return startAdjustExcel(chatId);
+  }
 
   // === KELOLA PROJECT (Master) ===
   if (data === "menu_project") {
@@ -272,7 +329,31 @@ async function handleCallback(callbackQuery) {
     if (!isMaster(chatId)) return sendMessage(chatId, "⛔ Hanya master.");
     return toggleProject(chatId, parseInt(data.replace("toggle_", "")));
   }
+
+  // === TRANSFER DATA PROJECT (Master) ===
+  if (data === "proj_transfer") {
+    if (!isMaster(chatId)) return sendMessage(chatId, "⛔ Hanya master.");
+    return startTransferProject(chatId);
+  }
+  if (data.startsWith("transfersrc_")) {
+    if (!isMaster(chatId)) return sendMessage(chatId, "⛔ Hanya master.");
+    return showTransferTargets(chatId, parseInt(data.replace("transfersrc_", "")));
+  }
+  if (data.startsWith("transfernew_")) {
+    if (!isMaster(chatId)) return sendMessage(chatId, "⛔ Hanya master.");
+    return startTransferNewProject(chatId, parseInt(data.replace("transfernew_", "")));
+  }
+  if (data.startsWith("transfertgt_")) {
+    if (!isMaster(chatId)) return sendMessage(chatId, "⛔ Hanya master.");
+    const [sourceId, targetId] = data.replace("transfertgt_", "").split("_").map(Number);
+    return confirmTransfer(chatId, sourceId, targetId);
+  }
+  if (data.startsWith("transferok_")) {
+    if (!isMaster(chatId)) return sendMessage(chatId, "⛔ Hanya master.");
+    const [sourceId, targetId] = data.replace("transferok_", "").split("_").map(Number);
+    return executeTransfer(chatId, sourceId, targetId);
+  }
 }
 
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log(`Bot v2.1 running on port ${PORT}`));
+app.listen(PORT, () => console.log(`Bot v2.8 running on port ${PORT}`));
