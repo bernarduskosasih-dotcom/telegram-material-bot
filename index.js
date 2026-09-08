@@ -246,7 +246,7 @@ async function handleCallback(callbackQuery) {
     }
     return askProject(chatId, dateVal);
   }
-  if (data.startsWith("proj_") && !data.startsWith("proj_add") && !data.startsWith("proj_toggle")) {
+  if (data.startsWith("proj_") && !data.startsWith("proj_add") && !data.startsWith("proj_toggle") && !data.startsWith("proj_transfer")) {
     const val = data.replace("proj_", "");
     return confirmAndSave(chatId, parseInt(val), userId, userName);
   }
