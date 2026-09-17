@@ -19,7 +19,7 @@ const { sendMessage, answerCallback, getFileBuffer } = require("./lib/telegram")
 const app = express();
 app.use(express.json());
 
-app.get("/", (req, res) => res.send("Bot APT Material v2.8 running!"));
+app.get("/", (req, res) => res.send("Bot APT Material v3.0 running!"));
 
 // ============================================================
 // Endpoint untuk daily report (dipanggil oleh cron)
@@ -356,4 +356,4 @@ async function handleCallback(callbackQuery) {
 }
 
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log(`Bot v2.8 running on port ${PORT}`));
+app.listen(PORT, () => console.log(`Bot v3.0 running on port ${PORT}`));
