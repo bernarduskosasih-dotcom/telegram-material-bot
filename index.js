@@ -1,4 +1,5 @@
 const express = require("express");
+const cron = require("node-cron");
 const {
   showMainMenu, startReport, showMaterials, askQuantity,
   askDate, askProject, confirmAndSave, showTodayStatus,
@@ -19,24 +20,60 @@ const { sendMessage, answerCallback, getFileBuffer } = require("./lib/telegram")
 const app = express();
 app.use(express.json());
 
-app.get("/", (req, res) => res.send("Bot APT Material v3.0 running!"));
+app.get("/", (req, res) => res.send("Bot APT Material v3.1 running!"));
 
 // ============================================================
 // Endpoint untuk daily report (dipanggil oleh cron)
 // ============================================================
+// Guard supaya report harian tidak terkirim dobel kalau cron-job.org
+// dan penjadwal internal sama-sama aktif pada hari yang sama.
+let lastDailyReportDate = null;
+
+function jakartaToday() {
+  return new Date().toLocaleDateString("sv-SE", { timeZone: "Asia/Jakarta" });
+}
+
+async function runDailyReportOnce(source) {
+  const today = jakartaToday();
+  if (lastDailyReportDate === today) {
+    console.log(`[daily-report] ${source}: sudah terkirim hari ini (${today}), dilewati`);
+    return { skipped: true, date: today };
+  }
+  const result = await sendDailyReport();
+  lastDailyReportDate = today;
+  console.log(`[daily-report] ${source}: terkirim (${today})`);
+  return result;
+}
+
 app.get("/api/daily-report", async (req, res) => {
   const secret = req.query.secret;
   if (secret !== process.env.CRON_SECRET) {
     return res.status(401).json({ error: "Unauthorized" });
   }
   try {
-    const result = await sendDailyReport();
+    const result = await runDailyReportOnce("endpoint");
     res.json({ ok: true, ...result });
   } catch (err) {
     console.error("Daily report error:", err);
     res.status(500).json({ error: err.message });
   }
 });
+
+// ============================================================
+// Penjadwal internal: report harian jam 08:00 WIB
+// (menggantikan cron-job.org; butuh Render Starter agar server tidak tidur)
+// ============================================================
+cron.schedule(
+  "0 8 * * *",
+  async () => {
+    try {
+      await runDailyReportOnce("cron-internal");
+    } catch (err) {
+      console.error("Daily report (cron internal) error:", err);
+    }
+  },
+  { timezone: "Asia/Jakarta" }
+);
 
 function isAllowed(userId) {
   const allowed = process.env.ALLOWED_USER_IDS;
@@ -356,4 +393,4 @@ async function handleCallback(callbackQuery) {
 }
 
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log(`Bot v3.0 running on port ${PORT}`));
+app.listen(PORT, () => console.log(`Bot v3.1 running on port ${PORT}`));
